@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suivi Heures Supp</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a2e;
+  min-height: 100vh;
+  padding: 16px;
+}
+.container {
+  max-width: 500px;
+  margin: 0 auto;
+}
+header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+header h1 {
+  font-size: 1.3rem;
+  margin-bottom: 12px;
+  color: #16213e;
+}
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.nav button {
+  background: #0f3460;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background .2s;
+}
+.nav button:hover { background: #16213e; }
+.nav span {
+  font-size: 1.1rem;
+  font-weight: 600;
+  min-width: 180px;
+  text-align: center;
+  text-transform: capitalize;
+}
+.days {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.day-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #eee;
+}
+.day-row:last-child { border-bottom: none; }
+.day-row.weekend {
+  background: #f8f9fa;
+  color: #aaa;
+}
+.day-label {
+  flex: 1;
+  font-size: .95rem;
+}
+.day-label .dow {
+  font-weight: 600;
+  margin-right: 4px;
+}
+.day-row.weekend .day-label::after {
+  content: ' (repos)';
+  font-size: .8rem;
+  color: #ccc;
+}
+.day-row input {
+  width: 70px;
+  text-align: center;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color .2s;
+}
+.day-row input:focus { border-color: #0f3460; }
+.day-row.weekend input {
+  background: #f0f0f0;
+  color: #bbb;
+}
+.total-bar {
+  background: #0f3460;
+  color: #fff;
+  border-radius: 12px;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.export-btn {
+  display: block;
+  width: 100%;
+  background: #27ae60;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+}
+.export-btn:hover { background: #219a52; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Suivi Heures Supplémentaires</h1>
+    <div class="nav">
+      <button id="prev">◀ Préc.</button>
+      <span id="monthLabel"></span>
+      <button id="next">Suiv. ▶</button>
+    </div>
+  </header>
+  <div class="days" id="days"></div>
+  <div class="total-bar">
+    <span>Total du mois</span>
+    <span id="total">0 h</span>
+  </div>
+  <button class="export-btn" id="export">Exporter Excel</button>
+</div>
+
+<script>
+const JOURS = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+let currentDate = new Date();
+let data = JSON.parse(localStorage.getItem('heures-supp') || '{}');
+
+function save() {
+  localStorage.setItem('heures-supp', JSON.stringify(data));
+}
+
+function getKey(y, m, d) {
+  return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+
+function render() {
+  const y = currentDate.getFullYear();
+  const m = currentDate.getMonth();
+  document.getElementById('monthLabel').textContent = `${MOIS[m]} ${y}`;
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const container = document.getElementById('days');
+  container.innerHTML = '';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(y, m, d).getDay();
+    const isWeekend = dow === 0 || dow === 6;
+    const key = getKey(y, m, d);
+    const row = document.createElement('div');
+    row.className = 'day-row' + (isWeekend ? ' weekend' : '');
+    row.innerHTML = `
+      <div class="day-label"><span class="dow">${JOURS[dow]}</span> ${d}</div>
+      <input type="number" min="0" step="0.5" placeholder="0" data-key="${key}" value="${data[key] || ''}">
+    `;
+    container.appendChild(row);
+  }
+
+  container.querySelectorAll('input').forEach(input => {
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      if (input.value === '') { delete data[input.dataset.key]; }
+      else { data[input.dataset.key] = v || 0; }
+      save();
+      updateTotal();
+    });
+  });
+
+  updateTotal();
+}
+
+function updateTotal() {
+  const y = currentDate.getFullYear();
+  const m = currentDate.getMonth();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  let total = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    total += data[getKey(y, m, d)] || 0;
+  }
+  document.getElementById('total').textContent = total + ' h';
+}
+
+document.getElementById('prev').addEventListener('click', () => {
+  currentDate.setMonth(currentDate.getMonth() - 1);
+  render();
+});
+document.getElementById('next').addEventListener('click', () => {
+  currentDate.setMonth(currentDate.getMonth() + 1);
+  render();
+});
+
+// Export Excel (CSV with BOM for Excel compatibility)
+document.getElementById('export').addEventListener('click', () => {
+  const y = currentDate.getFullYear();
+  const m = currentDate.getMonth();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const BOM = '\uFEFF';
+  let csv = BOM + 'Jour;Date;Heures Supp\n';
+  let total = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(y, m, d).getDay();
+    const key = getKey(y, m, d);
+    const val = data[key] || 0;
+    total += val;
+    const dateStr = `${String(d).padStart(2,'0')}/${String(m+1).padStart(2,'0')}/${y}`;
+    const isWE = (dow === 0 || dow === 6) ? ' (WE)' : '';
+    csv += `${JOURS[dow]}${isWE};${dateStr};${val}\n`;
+  }
+  csv += `;Total;${total}\n`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `heures-supp-${MOIS[m].toLowerCase()}-${y}.csv`;
+  a.click();
+});
+
+render();
+</script>
+</body>
+</html>
