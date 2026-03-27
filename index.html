@@ -26,6 +26,13 @@ header h1 {
   margin-bottom: 12px;
   color: #16213e;
 }
+.sync-status {
+  font-size: .75rem;
+  color: #888;
+  margin-bottom: 8px;
+}
+.sync-status.error { color: #e74c3c; }
+.sync-status.ok { color: #27ae60; }
 .nav {
   display: flex;
   align-items: center;
@@ -127,11 +134,12 @@ header h1 {
 <body>
 <div class="container">
   <header>
-    <h1>Suivi Heures Supplémentaires</h1>
+    <h1>Suivi Heures Supplementaires</h1>
+    <div class="sync-status" id="syncStatus">Connexion Firebase...</div>
     <div class="nav">
-      <button id="prev">◀ Préc.</button>
+      <button id="prev">&#9664; Prec.</button>
       <span id="monthLabel"></span>
-      <button id="next">Suiv. ▶</button>
+      <button id="next">Suiv. &#9654;</button>
     </div>
   </header>
   <div class="days" id="days"></div>
@@ -142,25 +150,92 @@ header h1 {
   <button class="export-btn" id="export">Exporter Excel</button>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
+// =============================================================
+// CONFIGURATION FIREBASE - A remplir avec tes valeurs
+// Voir : https://console.firebase.google.com
+// 1. Creer un projet
+// 2. Activer Realtime Database (mode test pour commencer)
+// 3. Activer Authentication > Anonymous
+// 4. Copier la config depuis Project Settings > General
+// =============================================================
+const firebaseConfig = {
+  apiKey: "REMPLACER_PAR_TA_CLE",
+  authDomain: "REMPLACER.firebaseapp.com",
+  databaseURL: "https://REMPLACER-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "REMPLACER",
+  storageBucket: "REMPLACER.appspot.com",
+  messagingSenderId: "REMPLACER",
+  appId: "REMPLACER"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+
 const JOURS = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
-const MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+const MOIS = ['Janvier','Fevrier','Mars','Avril','Mai','Juin','Juillet','Aout','Septembre','Octobre','Novembre','Decembre'];
 
 let currentDate = new Date();
-let data = JSON.parse(localStorage.getItem('heures-supp') || '{}');
+let data = {};
+let uid = null;
+let dbRef = null;
+let saveTimeout = null;
+
+const syncEl = document.getElementById('syncStatus');
+
+function setSync(msg, cls) {
+  syncEl.textContent = msg;
+  syncEl.className = 'sync-status ' + (cls || '');
+}
+
+// Auth anonyme + ecoute temps reel
+auth.signInAnonymously().then(cred => {
+  uid = cred.user.uid;
+  dbRef = db.ref('users/' + uid + '/heures');
+  setSync('Connecte - sync active', 'ok');
+
+  // Ecoute temps reel : si les donnees changent sur un autre PC, on met a jour
+  dbRef.on('value', snap => {
+    data = snap.val() || {};
+    render();
+    setSync('Synchronise', 'ok');
+  });
+}).catch(err => {
+  setSync('Erreur Firebase : ' + err.message + ' - mode local', 'error');
+  // Fallback localStorage
+  data = JSON.parse(localStorage.getItem('heures-supp') || '{}');
+  render();
+});
 
 function save() {
-  localStorage.setItem('heures-supp', JSON.stringify(data));
+  // Debounce : attend 500ms apres la derniere saisie avant de sauvegarder
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    if (dbRef) {
+      dbRef.set(data).then(() => {
+        setSync('Synchronise', 'ok');
+      }).catch(() => {
+        setSync('Erreur de sync', 'error');
+        localStorage.setItem('heures-supp', JSON.stringify(data));
+      });
+    } else {
+      localStorage.setItem('heures-supp', JSON.stringify(data));
+    }
+  }, 500);
 }
 
 function getKey(y, m, d) {
-  return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  return y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
 }
 
 function render() {
   const y = currentDate.getFullYear();
   const m = currentDate.getMonth();
-  document.getElementById('monthLabel').textContent = `${MOIS[m]} ${y}`;
+  document.getElementById('monthLabel').textContent = MOIS[m] + ' ' + y;
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const container = document.getElementById('days');
   container.innerHTML = '';
@@ -171,22 +246,31 @@ function render() {
     const key = getKey(y, m, d);
     const row = document.createElement('div');
     row.className = 'day-row' + (isWeekend ? ' weekend' : '');
-    row.innerHTML = `
-      <div class="day-label"><span class="dow">${JOURS[dow]}</span> ${d}</div>
-      <input type="number" min="0" step="0.5" placeholder="0" data-key="${key}" value="${data[key] || ''}">
-    `;
-    container.appendChild(row);
-  }
 
-  container.querySelectorAll('input').forEach(input => {
-    input.addEventListener('input', () => {
-      const v = parseFloat(input.value);
-      if (input.value === '') { delete data[input.dataset.key]; }
-      else { data[input.dataset.key] = v || 0; }
+    const label = document.createElement('div');
+    label.className = 'day-label';
+    label.innerHTML = '<span class="dow">' + JOURS[dow] + '</span> ' + d;
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '0.5';
+    input.placeholder = '0';
+    input.dataset.key = key;
+    if (data[key]) input.value = data[key];
+
+    input.addEventListener('input', function() {
+      const v = parseFloat(this.value);
+      if (this.value === '') { delete data[this.dataset.key]; }
+      else { data[this.dataset.key] = v || 0; }
       save();
       updateTotal();
     });
-  });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
+  }
 
   updateTotal();
 }
@@ -202,41 +286,38 @@ function updateTotal() {
   document.getElementById('total').textContent = total + ' h';
 }
 
-document.getElementById('prev').addEventListener('click', () => {
+document.getElementById('prev').addEventListener('click', function() {
   currentDate.setMonth(currentDate.getMonth() - 1);
   render();
 });
-document.getElementById('next').addEventListener('click', () => {
+document.getElementById('next').addEventListener('click', function() {
   currentDate.setMonth(currentDate.getMonth() + 1);
   render();
 });
 
-// Export Excel (CSV with BOM for Excel compatibility)
-document.getElementById('export').addEventListener('click', () => {
+// Export Excel (CSV avec BOM pour Excel)
+document.getElementById('export').addEventListener('click', function() {
   const y = currentDate.getFullYear();
   const m = currentDate.getMonth();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const BOM = '\uFEFF';
-  let csv = BOM + 'Jour;Date;Heures Supp\n';
-  let total = 0;
+  var csv = '\uFEFF' + 'Jour;Date;Heures Supp\n';
+  var total = 0;
   for (let d = 1; d <= daysInMonth; d++) {
     const dow = new Date(y, m, d).getDay();
     const key = getKey(y, m, d);
     const val = data[key] || 0;
     total += val;
-    const dateStr = `${String(d).padStart(2,'0')}/${String(m+1).padStart(2,'0')}/${y}`;
+    const dateStr = String(d).padStart(2,'0') + '/' + String(m+1).padStart(2,'0') + '/' + y;
     const isWE = (dow === 0 || dow === 6) ? ' (WE)' : '';
-    csv += `${JOURS[dow]}${isWE};${dateStr};${val}\n`;
+    csv += JOURS[dow] + isWE + ';' + dateStr + ';' + val + '\n';
   }
-  csv += `;Total;${total}\n`;
+  csv += ';Total;' + total + '\n';
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `heures-supp-${MOIS[m].toLowerCase()}-${y}.csv`;
+  a.download = 'heures-supp-' + MOIS[m].toLowerCase() + '-' + y + '.csv';
   a.click();
 });
-
-render();
 </script>
 </body>
 </html>
