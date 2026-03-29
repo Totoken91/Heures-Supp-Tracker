@@ -129,13 +129,68 @@ header h1 {
   transition: background .2s;
 }
 .export-btn:hover { background: #219a52; }
+
+/* Login screen */
+.login-screen {
+  max-width: 400px;
+  margin: 80px auto;
+  text-align: center;
+}
+.login-screen h1 {
+  font-size: 1.3rem;
+  color: #16213e;
+  margin-bottom: 8px;
+}
+.login-screen p {
+  font-size: .9rem;
+  color: #888;
+  margin-bottom: 20px;
+}
+.login-screen input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid #ddd;
+  border-radius: 10px;
+  font-size: 1rem;
+  outline: none;
+  margin-bottom: 12px;
+  text-align: center;
+}
+.login-screen input:focus { border-color: #0f3460; }
+.login-screen button {
+  width: 100%;
+  background: #0f3460;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-screen button:hover { background: #16213e; }
+.login-screen .error { color: #e74c3c; font-size: .85rem; margin-bottom: 12px; }
+.login-screen .hint { font-size: .8rem; color: #aaa; margin-top: 12px; }
+.hidden { display: none; }
 </style>
 </head>
 <body>
-<div class="container">
+
+<!-- Login screen -->
+<div class="login-screen" id="loginScreen">
+  <h1>Suivi Heures Supplementaires</h1>
+  <p>Entre ton code secret pour synchroniser tes donnees entre tes PC</p>
+  <div class="error hidden" id="loginError"></div>
+  <input type="text" id="codeInput" placeholder="Ton code secret" autocomplete="off">
+  <button id="loginBtn">Acceder</button>
+  <div class="hint">Meme code = memes donnees sur tous tes PC</div>
+</div>
+
+<!-- App -->
+<div class="container hidden" id="app">
   <header>
     <h1>Suivi Heures Supplementaires</h1>
-    <div class="sync-status" id="syncStatus">Connexion Firebase...</div>
+    <div class="sync-status" id="syncStatus">Connexion...</div>
     <div class="nav">
       <button id="prev">&#9664; Prec.</button>
       <span id="monthLabel"></span>
@@ -151,17 +206,8 @@ header h1 {
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
-// =============================================================
-// CONFIGURATION FIREBASE - A remplir avec tes valeurs
-// Voir : https://console.firebase.google.com
-// 1. Creer un projet
-// 2. Activer Realtime Database (mode test pour commencer)
-// 3. Activer Authentication > Anonymous
-// 4. Copier la config depuis Project Settings > General
-// =============================================================
 const firebaseConfig = {
   apiKey: "AIzaSyC3IiVNyY2wuKcaZ0cWdPZjwVv1qfACI7A",
   authDomain: "heures-supp-7d077.firebaseapp.com",
@@ -173,7 +219,6 @@ const firebaseConfig = {
 };
 
 firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
 const db = firebase.database();
 
 const JOURS = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
@@ -181,49 +226,77 @@ const MOIS = ['Janvier','Fevrier','Mars','Avril','Mai','Juin','Juillet','Aout','
 
 let currentDate = new Date();
 let data = {};
-let uid = null;
 let dbRef = null;
 let saveTimeout = null;
 
 const syncEl = document.getElementById('syncStatus');
+const loginScreen = document.getElementById('loginScreen');
+const appScreen = document.getElementById('app');
 
 function setSync(msg, cls) {
   syncEl.textContent = msg;
   syncEl.className = 'sync-status ' + (cls || '');
 }
 
-// Auth anonyme + ecoute temps reel
-auth.signInAnonymously().then(cred => {
-  uid = cred.user.uid;
-  dbRef = db.ref('users/' + uid + '/heures');
-  setSync('Connecte - sync active', 'ok');
+// Simple hash du code secret pour creer un ID unique
+function hashCode(str) {
+  var hash = 0;
+  for (var i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return 'u' + Math.abs(hash).toString(36);
+}
 
-  // Ecoute temps reel : si les donnees changent sur un autre PC, on met a jour
-  dbRef.on('value', snap => {
+// Login
+function startApp(code) {
+  var userId = hashCode(code);
+  dbRef = db.ref('users/' + userId + '/heures');
+
+  loginScreen.classList.add('hidden');
+  appScreen.classList.remove('hidden');
+  localStorage.setItem('heures-supp-code', code);
+  setSync('Connexion...', '');
+
+  dbRef.on('value', function(snap) {
     data = snap.val() || {};
     render();
     setSync('Synchronise', 'ok');
+  }, function(err) {
+    setSync('Erreur : ' + err.message, 'error');
   });
-}).catch(err => {
-  setSync('Erreur Firebase : ' + err.message + ' - mode local', 'error');
-  // Fallback localStorage
-  data = JSON.parse(localStorage.getItem('heures-supp') || '{}');
-  render();
+}
+
+document.getElementById('loginBtn').addEventListener('click', function() {
+  var code = document.getElementById('codeInput').value.trim();
+  if (code.length < 3) {
+    var errEl = document.getElementById('loginError');
+    errEl.textContent = '3 caracteres minimum';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  startApp(code);
 });
 
+document.getElementById('codeInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('loginBtn').click();
+});
+
+// Auto-login si code deja sauvegarde
+var savedCode = localStorage.getItem('heures-supp-code');
+if (savedCode) {
+  startApp(savedCode);
+}
+
 function save() {
-  // Debounce : attend 500ms apres la derniere saisie avant de sauvegarder
   clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
+  saveTimeout = setTimeout(function() {
     if (dbRef) {
-      dbRef.set(data).then(() => {
+      dbRef.set(data).then(function() {
         setSync('Synchronise', 'ok');
-      }).catch(() => {
+      }).catch(function() {
         setSync('Erreur de sync', 'error');
-        localStorage.setItem('heures-supp', JSON.stringify(data));
       });
-    } else {
-      localStorage.setItem('heures-supp', JSON.stringify(data));
     }
   }, 500);
 }
@@ -233,25 +306,25 @@ function getKey(y, m, d) {
 }
 
 function render() {
-  const y = currentDate.getFullYear();
-  const m = currentDate.getMonth();
+  var y = currentDate.getFullYear();
+  var m = currentDate.getMonth();
   document.getElementById('monthLabel').textContent = MOIS[m] + ' ' + y;
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const container = document.getElementById('days');
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
+  var container = document.getElementById('days');
   container.innerHTML = '';
 
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(y, m, d).getDay();
-    const isWeekend = dow === 0 || dow === 6;
-    const key = getKey(y, m, d);
-    const row = document.createElement('div');
+  for (var d = 1; d <= daysInMonth; d++) {
+    var dow = new Date(y, m, d).getDay();
+    var isWeekend = dow === 0 || dow === 6;
+    var key = getKey(y, m, d);
+    var row = document.createElement('div');
     row.className = 'day-row' + (isWeekend ? ' weekend' : '');
 
-    const label = document.createElement('div');
+    var label = document.createElement('div');
     label.className = 'day-label';
     label.innerHTML = '<span class="dow">' + JOURS[dow] + '</span> ' + d;
 
-    const input = document.createElement('input');
+    var input = document.createElement('input');
     input.type = 'number';
     input.min = '0';
     input.step = '0.5';
@@ -260,7 +333,7 @@ function render() {
     if (data[key]) input.value = data[key];
 
     input.addEventListener('input', function() {
-      const v = parseFloat(this.value);
+      var v = parseFloat(this.value);
       if (this.value === '') { delete data[this.dataset.key]; }
       else { data[this.dataset.key] = v || 0; }
       save();
@@ -276,11 +349,11 @@ function render() {
 }
 
 function updateTotal() {
-  const y = currentDate.getFullYear();
-  const m = currentDate.getMonth();
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  let total = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
+  var y = currentDate.getFullYear();
+  var m = currentDate.getMonth();
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
+  var total = 0;
+  for (var d = 1; d <= daysInMonth; d++) {
     total += data[getKey(y, m, d)] || 0;
   }
   document.getElementById('total').textContent = total + ' h';
@@ -295,25 +368,24 @@ document.getElementById('next').addEventListener('click', function() {
   render();
 });
 
-// Export Excel (CSV avec BOM pour Excel)
 document.getElementById('export').addEventListener('click', function() {
-  const y = currentDate.getFullYear();
-  const m = currentDate.getMonth();
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  var y = currentDate.getFullYear();
+  var m = currentDate.getMonth();
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
   var csv = '\uFEFF' + 'Jour;Date;Heures Supp\n';
   var total = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(y, m, d).getDay();
-    const key = getKey(y, m, d);
-    const val = data[key] || 0;
+  for (var d = 1; d <= daysInMonth; d++) {
+    var dow = new Date(y, m, d).getDay();
+    var key = getKey(y, m, d);
+    var val = data[key] || 0;
     total += val;
-    const dateStr = String(d).padStart(2,'0') + '/' + String(m+1).padStart(2,'0') + '/' + y;
-    const isWE = (dow === 0 || dow === 6) ? ' (WE)' : '';
+    var dateStr = String(d).padStart(2,'0') + '/' + String(m+1).padStart(2,'0') + '/' + y;
+    var isWE = (dow === 0 || dow === 6) ? ' (WE)' : '';
     csv += JOURS[dow] + isWE + ';' + dateStr + ';' + val + '\n';
   }
   csv += ';Total;' + total + '\n';
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'heures-supp-' + MOIS[m].toLowerCase() + '-' + y + '.csv';
   a.click();
